@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>DoggieDate - Profile</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js"></script>
+</head>
+<body>
+  <h1>Your Doggie Profile</h1>
+  <input type="file" id="pet-pic">
+  <button onclick="uploadPic()">Upload Pet Pic</button>
+  <div id="pic-preview"></div>
+  <a href="gallery.html">View All Pets</a>
+  <div id="ads">
+    <!-- Example Ad (replace with your affiliate/ad code) -->
+    <a href="YOUR_AFFILIATE_LINK" target="_blank">
+      <img src="https://via.placeholder.com/468x60?text=Ad+Banner" alt="Ad">
+    </a>
+  </div>
+  <script>
+    const supabaseUrl = 'YOUR_SUPABASE_URL';
+    const supabaseKey = 'YOUR_SUPABASE_ANON_KEY';
+    const supabase = supabase.createClient(supabaseUrl, supabaseKey);
+
+    async function uploadPic() {
+      const user = (await supabase.auth.getUser()).data.user;
+      const file = document.getElementById('pet-pic').files[0];
+      if (!file || !user) return alert('Please select a file and be logged in!');
+      const filePath = user.id + '/' + file.name;
+      const { error } = await supabase.storage.from('pet-pics').upload(filePath, file, { upsert: true });
+      if (error) alert(error.message);
+      else {
+        const url = supabase.storage.from('pet-pics').getPublicUrl(filePath).data.publicUrl;
+        document.getElementById('pic-preview').innerHTML = `<img src="${url}" width="200">`;
+      }
+    }
+  </script>
+</body>
+</html>
