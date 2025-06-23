@@ -8,7 +8,7 @@ const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-doggie-date-
 const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
 const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
-// Dummy data for demonstration
+// Dummy data for demonstration - used as fallback if Firestore is empty
 const dummyDogs = [
   {
     id: 'dog1',
@@ -163,13 +163,33 @@ const dummyVetsSupplies = [
 
 const App = () => {
   const [view, setView] = useState('home'); // 'home', 'profile', 'businesses', 'vets', 'chat'
-  const [dogs, setDogs] = useState([]);
+  const [dogs, setDogs] = useState([]); // All public dog profiles
   const [currentDogIndex, setCurrentDogIndex] = useState(0);
   const [showHealthModal, setShowHealthModal] = useState(false);
   const [businesses, setBusinesses] = useState([]);
   const [vetsSupplies, setVetsSupplies] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [filteredVetsSupplies, setFilteredVetsSupplies] = useState([]);
+
+  // State for the current user's dog profile
+  const [myDogProfile, setMyDogProfile] = useState({
+    id: '', // Will be userId or a unique ID from Firestore
+    name: '',
+    breed: '',
+    age: '',
+    size: '',
+    energy: '',
+    temperament: '',
+    photos: ['https://placehold.co/400x300/DDDDDD/666666?text=Upload+Photo'],
+    videos: [],
+    healthCheckup: {
+      date: '',
+      status: '',
+      details: '',
+    },
+  });
+  const [isEditingMyDog, setIsEditingMyDog] = useState(false);
+  const [myLikedDogs, setMyLikedDogs] = useState([]); // Dogs the current user has "liked"
 
   // Firebase states
   const [db, setDb] = useState(null);
@@ -217,47 +237,83 @@ const App = () => {
     }
   }, []);
 
-  // Fetch data from Firestore once auth is ready
+  // Fetch data from Firestore once auth is ready and userId is available
   useEffect(() => {
     if (!authReady || !db || !userId) {
+      console.log("Firebase: Waiting for auth ready, db, or userId to fetch data.");
       return; // Wait until auth is ready and userId is available
     }
 
     console.log("Firebase: Fetching data for userId:", userId);
 
-    // Public data collection for dogs
+    // --- Public Data Collections ---
+    // Dogs
     const dogsColRef = collection(db, `artifacts/${appId}/public/data/dogs`);
     const dogsUnsubscribe = onSnapshot(dogsColRef, (snapshot) => {
       const fetchedDogs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setDogs(fetchedDogs.length > 0 ? fetchedDogs : dummyDogs); // Use dummy if no data
-      console.log("Firebase: Fetched dogs data.");
+      // Filter out the current user's dog from the public list for swiping
+      const filteredForSwipe = fetchedDogs.filter(dog => dog.id !== userId);
+      setDogs(filteredForSwipe.length > 0 ? filteredForSwipe : dummyDogs.filter(dog => dog.owner !== 'Alice')); // Dummy fallback
+      console.log("Firebase: Fetched public dogs data.");
     }, (error) => {
-      console.error("Firebase: Error fetching dogs data:", error);
-      setDogs(dummyDogs); // Fallback to dummy data on error
+      console.error("Firebase: Error fetching public dogs data:", error);
+      setDogs(dummyDogs.filter(dog => dog.owner !== 'Alice')); // Fallback to dummy data on error
     });
 
-    // Public data collection for businesses
+    // Businesses
     const businessesColRef = collection(db, `artifacts/${appId}/public/data/businesses`);
     const businessesUnsubscribe = onSnapshot(businessesColRef, (snapshot) => {
       const fetchedBusinesses = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setBusinesses(fetchedBusinesses.length > 0 ? fetchedBusinesses : dummyBusinesses); // Use dummy if no data
-      console.log("Firebase: Fetched businesses data.");
+      setBusinesses(fetchedBusinesses.length > 0 ? fetchedBusinesses : dummyBusinesses);
+      console.log("Firebase: Fetched public businesses data.");
     }, (error) => {
-      console.error("Firebase: Error fetching businesses data:", error);
-      setBusinesses(dummyBusinesses); // Fallback to dummy data on error
+      console.error("Firebase: Error fetching public businesses data:", error);
+      setBusinesses(dummyBusinesses);
     });
 
-    // Public data collection for vets and supplies
+    // Vets and Supplies
     const vetsSuppliesColRef = collection(db, `artifacts/${appId}/public/data/vetsSupplies`);
     const vetsSuppliesUnsubscribe = onSnapshot(vetsSuppliesColRef, (snapshot) => {
       const fetchedVetsSupplies = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setVetsSupplies(fetchedVetsSupplies.length > 0 ? fetchedVetsSupplies : dummyVetsSupplies); // Use dummy if no data
+      setVetsSupplies(fetchedVetsSupplies.length > 0 ? fetchedVetsSupplies : dummyVetsSupplies);
       setFilteredVetsSupplies(fetchedVetsSupplies.length > 0 ? fetchedVetsSupplies : dummyVetsSupplies);
-      console.log("Firebase: Fetched vets/supplies data.");
+      console.log("Firebase: Fetched public vets/supplies data.");
     }, (error) => {
-      console.error("Firebase: Error fetching vets/supplies data:", error);
-      setVetsSupplies(dummyVetsSupplies); // Fallback to dummy data on error
+      console.error("Firebase: Error fetching public vets/supplies data:", error);
+      setVetsSupplies(dummyVetsSupplies);
       setFilteredVetsSupplies(dummyVetsSupplies);
+    });
+
+    // --- Private User Data Collections ---
+    // User's own dog profile
+    const myDogDocRef = doc(db, `artifacts/${appId}/users/${userId}/myDogs`, 'myDog');
+    const myDogUnsubscribe = onSnapshot(myDogDocRef, (docSnapshot) => {
+      if (docSnapshot.exists()) {
+        setMyDogProfile({ id: docSnapshot.id, ...docSnapshot.data() });
+        console.log("Firebase: Fetched user's dog profile.");
+      } else {
+        // If no profile exists, set to a default empty state
+        setMyDogProfile({
+          id: userId, // Use userId as the default ID for the user's dog
+          name: '', breed: '', age: '', size: '', energy: '', temperament: '',
+          photos: ['https://placehold.co/400x300/DDDDDD/666666?text=Upload+Photo'],
+          videos: [],
+          healthCheckup: { date: '', status: '', details: '' },
+        });
+        console.log("Firebase: User's dog profile not found, set default.");
+      }
+    }, (error) => {
+      console.error("Firebase: Error fetching user's dog profile:", error);
+    });
+
+    // User's liked dogs (for match tracking)
+    const likedDogsColRef = collection(db, `artifacts/${appId}/users/${userId}/likedDogs`);
+    const likedDogsUnsubscribe = onSnapshot(likedDogsColRef, (snapshot) => {
+      const fetchedLikedDogs = snapshot.docs.map(doc => doc.id); // Store only the IDs of liked dogs
+      setMyLikedDogs(fetchedLikedDogs);
+      console.log("Firebase: Fetched user's liked dogs:", fetchedLikedDogs);
+    }, (error) => {
+      console.error("Firebase: Error fetching user's liked dogs:", error);
     });
 
 
@@ -265,9 +321,9 @@ const App = () => {
     const addInitialData = async () => {
       const dogsSnapshot = await getDocs(dogsColRef);
       if (dogsSnapshot.empty) {
-        console.log("Firebase: Adding dummy dogs to Firestore.");
+        console.log("Firebase: Adding dummy public dogs to Firestore.");
         for (const dog of dummyDogs) {
-          await addDoc(dogsColRef, dog);
+          await addDoc(dogsColRef, dog); // Use addDoc for auto-generated IDs in public collection
         }
       }
 
@@ -293,6 +349,8 @@ const App = () => {
       dogsUnsubscribe();
       businessesUnsubscribe();
       vetsSuppliesUnsubscribe();
+      myDogUnsubscribe();
+      likedDogsUnsubscribe();
     };
   }, [authReady, db, userId]); // Dependencies: authReady, db, userId
 
@@ -309,16 +367,102 @@ const App = () => {
 
   const currentDog = dogs[currentDogIndex];
 
+  // Function to handle swiping left (Nope)
   const swipeLeft = () => {
     setCurrentDogIndex((prevIndex) => (prevIndex + 1) % dogs.length);
   };
 
-  const swipeRight = () => {
-    // Simulate a match or just go to the next dog
-    console.log(`Matched with ${currentDog.name}!`);
-    setCurrentDogIndex((prevIndex) => (prevIndex + 1) % dogs.length);
-    // In a real app, this would trigger a "match" event and open a chat or similar
+  // Function to handle swiping right (Like)
+  const swipeRight = async () => {
+    if (!db || !userId || !currentDog) {
+      console.log("Cannot like dog: DB, userId, or currentDog missing.");
+      return;
+    }
+
+    // Prevent liking your own dog
+    if (currentDog.id === userId) {
+      console.log("Cannot like your own dog!");
+      setCurrentDogIndex((prevIndex) => (prevIndex + 1) % dogs.length);
+      return;
+    }
+
+    // Prevent liking the same dog multiple times
+    if (myLikedDogs.includes(currentDog.id)) {
+        console.log("Already liked this dog!");
+        setCurrentDogIndex((prevIndex) => (prevIndex + 1) % dogs.length);
+        return;
+    }
+
+    try {
+      // Store the liked dog's ID in the user's private likedDogs collection
+      const likedDogsColRef = collection(db, `artifacts/${appId}/users/${userId}/likedDogs`);
+      // Use setDoc with the dog's ID as the document ID for easy lookup
+      await setDoc(doc(likedDogsColRef, currentDog.id), {
+        likedAt: new Date().toISOString(),
+        dogId: currentDog.id,
+        dogName: currentDog.name,
+      });
+      console.log(`Liked ${currentDog.name}! (ID: ${currentDog.id})`);
+
+      // In a real app, you would also check if this is a mutual like
+      // If the other dog's owner also liked this user's dog, it's a match!
+      // This would involve querying the other owner's likedDogs collection.
+
+      setCurrentDogIndex((prevIndex) => (prevIndex + 1) % dogs.length);
+    } catch (error) {
+      console.error("Error liking dog:", error);
+    }
   };
+
+  // Handler for updating user's dog profile form fields
+  const handleMyDogProfileChange = (e) => {
+    const { name, value } = e.target;
+    if (name.startsWith('healthCheckup.')) {
+      setMyDogProfile(prev => ({
+        ...prev,
+        healthCheckup: {
+          ...prev.healthCheckup,
+          [name.split('.')[1]]: value
+        }
+      }));
+    } else {
+      setMyDogProfile(prev => ({ ...prev, [name]: value }));
+    }
+  };
+
+  // Handler for saving user's dog profile to Firestore
+  const saveMyDogProfile = async () => {
+    if (!db || !userId) {
+      console.log("Cannot save profile: DB or userId missing.");
+      return;
+    }
+    if (!myDogProfile.name || !myDogProfile.breed) {
+      alert("Please fill in your dog's name and breed."); // Use a custom modal instead of alert in production
+      return;
+    }
+
+    try {
+      const myDogDocRef = doc(db, `artifacts/${appId}/users/${userId}/myDogs`, 'myDog');
+      // Set the document with merge: true to avoid overwriting other fields if they exist
+      await setDoc(myDogDocRef, { ...myDogProfile, id: userId }, { merge: true });
+
+      // Also update the public dogs collection if the user's dog is meant to be discoverable
+      // In a real app, this might be triggered by a "publish profile" action.
+      const publicDogDocRef = doc(db, `artifacts/${appId}/public/data/dogs`, userId);
+      await setDoc(publicDogDocRef, {
+          ...myDogProfile,
+          id: userId, // Ensure the ID matches the userId for easy lookup
+          owner: userId // Indicate the owner (userId) of this public dog profile
+      }, { merge: true });
+
+      setIsEditingMyDog(false);
+      console.log("User's dog profile saved successfully!");
+    } catch (error) {
+      console.error("Error saving user's dog profile:", error);
+      alert("Failed to save profile. Please try again."); // Use custom modal
+    }
+  };
+
 
   const DogProfileCard = ({ dog }) => (
     <div className="bg-white rounded-xl shadow-lg p-6 max-w-sm mx-auto my-4 transform transition-all duration-300 hover:scale-105">
@@ -375,15 +519,21 @@ const App = () => {
           &times;
         </button>
         <h3 className="text-2xl font-bold text-gray-800 mb-4 text-center">Health Checkup for {dog.name}</h3>
-        <p className="text-gray-700 mb-2">
-          <span className="font-semibold">Last Checkup:</span> {dog.healthCheckup.date}
-        </p>
-        <p className="text-gray-700 mb-2">
-          <span className="font-semibold">Status:</span> {dog.healthCheckup.status}
-        </p>
-        <p className="text-gray-700 mb-4">
-          <span className="font-semibold">Details:</span> {dog.healthCheckup.details}
-        </p>
+        {dog.healthCheckup && dog.healthCheckup.date ? (
+          <>
+            <p className="text-gray-700 mb-2">
+              <span className="font-semibold">Last Checkup:</span> {dog.healthCheckup.date}
+            </p>
+            <p className="text-gray-700 mb-2">
+              <span className="font-semibold">Status:</span> {dog.healthCheckup.status}
+            </p>
+            <p className="text-gray-700 mb-4">
+              <span className="font-semibold">Details:</span> {dog.healthCheckup.details}
+            </p>
+          </>
+        ) : (
+          <p className="text-gray-700 mb-4 text-center">No health checkup details available.</p>
+        )}
         <p className="text-sm text-gray-500 text-center italic">
           Disclaimer: Health information is provided by owners and should be verified independently.
         </p>
@@ -426,7 +576,6 @@ const App = () => {
           >
             Vets & Supplies
           </button>
-          {/* A placeholder for user profile or chat button */}
           <button
             onClick={() => setView('profile')}
             className={`px-4 py-2 rounded-full font-semibold transition-all duration-200 ${
@@ -473,7 +622,7 @@ const App = () => {
                 )}
               </>
             ) : (
-              <p className="text-gray-600 text-lg">Loading dog profiles...</p>
+              <p className="text-gray-600 text-lg">Loading dog profiles or no dogs available for swiping...</p>
             )}
           </section>
         )}
@@ -523,7 +672,7 @@ const App = () => {
                   <div key={item.id} className="bg-white rounded-xl shadow-lg p-6 border border-gray-200 transition-all duration-300 transform hover:scale-105">
                     <h3 className="text-xl font-bold text-indigo-700 mb-2">{item.name}</h3>
                     <p className="text-gray-600 mb-1">Type: {item.type}</p>
-                    <p className="text-gray-600 mb-1">Address: {item.address}</p>
+                    <p className="text-600 mb-1">Address: {item.address}</p>
                     <p className="text-gray-600 mb-1">Phone: {item.phone}</p>
                     <p className="text-gray-700 text-sm mt-2">{item.description}</p>
                     {item.hours && <p className="text-gray-700 text-sm mt-1">Hours: {item.hours}</p>}
@@ -538,25 +687,216 @@ const App = () => {
 
         {view === 'profile' && (
           <section className="text-center py-8">
-            <h2 className="text-4xl font-extrabold text-gray-800 mb-6">Your Doggie Profile (Coming Soon!)</h2>
-            <p className="text-lg text-gray-700">
-              This section would allow you to create and manage your dog's profile,
-              upload photos/videos, and update health information.
-            </p>
+            <h2 className="text-4xl font-extrabold text-gray-800 mb-6">Your Doggie Profile</h2>
+            {!userId ? (
+              <p className="text-gray-600 text-lg">Loading user profile...</p>
+            ) : (
+              <div className="mt-8 p-6 bg-white rounded-xl shadow-lg max-w-md mx-auto">
+                {isEditingMyDog ? (
+                  <>
+                    <h3 className="text-2xl font-semibold text-gray-800 mb-4">Edit Your Dog's Profile</h3>
+                    <div className="space-y-4 text-left">
+                      <div>
+                        <label htmlFor="name" className="block text-sm font-medium text-gray-700">Dog's Name</label>
+                        <input
+                          type="text"
+                          id="name"
+                          name="name"
+                          value={myDogProfile.name}
+                          onChange={handleMyDogProfileChange}
+                          className="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
+                          placeholder="e.g., Sparky"
+                        />
+                      </div>
+                      <div>
+                        <label htmlFor="breed" className="block text-sm font-medium text-gray-700">Breed</label>
+                        <input
+                          type="text"
+                          id="breed"
+                          name="breed"
+                          value={myDogProfile.breed}
+                          onChange={handleMyDogProfileChange}
+                          className="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
+                          placeholder="e.g., Labrador"
+                        />
+                      </div>
+                      <div>
+                        <label htmlFor="age" className="block text-sm font-medium text-gray-700">Age (Years)</label>
+                        <input
+                          type="number"
+                          id="age"
+                          name="age"
+                          value={myDogProfile.age}
+                          onChange={handleMyDogProfileChange}
+                          className="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
+                          placeholder="e.g., 2"
+                        />
+                      </div>
+                      <div>
+                        <label htmlFor="size" className="block text-sm font-medium text-gray-700">Size</label>
+                        <select
+                          id="size"
+                          name="size"
+                          value={myDogProfile.size}
+                          onChange={handleMyDogProfileChange}
+                          className="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
+                        >
+                          <option value="">Select Size</option>
+                          <option value="Small">Small</option>
+                          <option value="Medium">Medium</option>
+                          <option value="Large">Large</option>
+                          <option value="Giant">Giant</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label htmlFor="energy" className="block text-sm font-medium text-gray-700">Energy Level</label>
+                        <select
+                          id="energy"
+                          name="energy"
+                          value={myDogProfile.energy}
+                          onChange={handleMyDogProfileChange}
+                          className="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
+                        >
+                          <option value="">Select Energy</option>
+                          <option value="Low">Low</option>
+                          <option value="Medium">Medium</option>
+                          <option value="High">High</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label htmlFor="temperament" className="block text-sm font-medium text-gray-700">Temperament</label>
+                        <textarea
+                          id="temperament"
+                          name="temperament"
+                          value={myDogProfile.temperament}
+                          onChange={handleMyDogProfileChange}
+                          rows="3"
+                          className="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
+                          placeholder="e.g., Playful, loves kids, a bit shy with new dogs."
+                        ></textarea>
+                      </div>
+                      {/* Placeholder for Photo/Video Upload */}
+                      <div className="text-center mt-4">
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Dog Photos/Videos</label>
+                        <div className="flex justify-center items-center h-32 w-full bg-gray-100 rounded-md border-2 border-dashed border-gray-300 text-gray-500">
+                          <span className="text-center">Click to upload (Coming Soon!)</span>
+                        </div>
+                        {myDogProfile.photos[0] && myDogProfile.photos[0] !== 'https://placehold.co/400x300/DDDDDD/666666?text=Upload+Photo' && (
+                            <img src={myDogProfile.photos[0]} alt="Dog Profile" className="mt-2 mx-auto max-w-full h-auto rounded-md" />
+                        )}
+                      </div>
+
+                      <h4 className="text-lg font-semibold text-gray-800 mt-6 mb-2">Health Checkup</h4>
+                      <div>
+                        <label htmlFor="healthCheckup.date" className="block text-sm font-medium text-gray-700">Last Checkup Date</label>
+                        <input
+                          type="date"
+                          id="healthCheckup.date"
+                          name="healthCheckup.date"
+                          value={myDogProfile.healthCheckup.date}
+                          onChange={handleMyDogProfileChange}
+                          className="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
+                        />
+                      </div>
+                      <div>
+                        <label htmlFor="healthCheckup.status" className="block text-sm font-medium text-gray-700">Health Status</label>
+                        <input
+                          type="text"
+                          id="healthCheckup.status"
+                          name="healthCheckup.status"
+                          value={myDogProfile.healthCheckup.status}
+                          onChange={handleMyDogProfileChange}
+                          className="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
+                          placeholder="e.g., Healthy, Vaccinations up-to-date"
+                        />
+                      </div>
+                      <div>
+                        <label htmlFor="healthCheckup.details" className="block text-sm font-medium text-gray-700">Health Details</label>
+                        <textarea
+                          id="healthCheckup.details"
+                          name="healthCheckup.details"
+                          value={myDogProfile.healthCheckup.details}
+                          onChange={handleMyDogProfileChange}
+                          rows="4"
+                          className="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
+                          placeholder="e.g., Annual checkup, clear bill of health. All vaccinations current (Rabies, DHPP). No known allergies."
+                        ></textarea>
+                      </div>
+
+                    </div>
+                    <div className="flex justify-between mt-6 space-x-4">
+                      <button
+                        onClick={saveMyDogProfile}
+                        className="flex-1 bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-6 rounded-full shadow-lg transition-all duration-300 transform hover:scale-105"
+                      >
+                        Save Profile
+                      </button>
+                      <button
+                        onClick={() => setIsEditingMyDog(false)}
+                        className="flex-1 bg-gray-400 hover:bg-gray-500 text-white font-bold py-3 px-6 rounded-full shadow-lg transition-all duration-300 transform hover:scale-105"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <h3 className="text-2xl font-semibold text-gray-800 mb-4">Your Dog's Current Profile</h3>
+                    {myDogProfile.name ? (
+                      <div className="space-y-3 text-left">
+                         <img
+                            src={myDogProfile.photos[0]}
+                            alt={`${myDogProfile.name}`}
+                            className="w-full h-48 object-cover rounded-lg mb-4"
+                            onError={(e) => { e.target.onerror = null; e.target.src="https://placehold.co/400x300/CCCCCC/000?text=No+Photo"; }}
+                        />
+                        <p><span className="font-semibold">Name:</span> {myDogProfile.name}</p>
+                        <p><span className="font-semibold">Breed:</span> {myDogProfile.breed}</p>
+                        <p><span className="font-semibold">Age:</span> {myDogProfile.age} years</p>
+                        <p><span className="font-semibold">Size:</span> {myDogProfile.size}</p>
+                        <p><span className="font-semibold">Energy:</span> {myDogProfile.energy}</p>
+                        <p><span className="font-semibold">Temperament:</span> {myDogProfile.temperament}</p>
+                        <h4 className="font-semibold mt-4">Health Checkup:</h4>
+                        {myDogProfile.healthCheckup && myDogProfile.healthCheckup.date ? (
+                            <>
+                                <p><span className="font-semibold text-sm">Last Checkup:</span> {myDogProfile.healthCheckup.date}</p>
+                                <p><span className="font-semibold text-sm">Status:</span> {myDogProfile.healthCheckup.status}</p>
+                                <p><span className="font-semibold text-sm">Details:</span> {myDogProfile.healthCheckup.details}</p>
+                            </>
+                        ) : (
+                            <p className="text-sm italic text-gray-500">No health details recorded.</p>
+                        )}
+                      </div>
+                    ) : (
+                      <p className="text-lg text-gray-700">
+                        You haven't created your dog's profile yet!
+                      </p>
+                    )}
+                    <button
+                      onClick={() => setIsEditingMyDog(true)}
+                      className="mt-6 bg-purple-500 hover:bg-purple-600 text-white font-bold py-3 px-6 rounded-full shadow-lg transition-all duration-300 transform hover:scale-105"
+                    >
+                      {myDogProfile.name ? "Edit My Dog's Profile" : "Set Up My Dog's Profile"}
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
             <div className="mt-8 p-6 bg-white rounded-xl shadow-lg max-w-md mx-auto">
-              <h3 className="text-2xl font-semibold text-gray-800 mb-4">What's next for your profile:</h3>
-              <ul className="list-disc list-inside text-left text-gray-700 space-y-2">
-                <li>Create and edit your dog's personal profile.</li>
-                <li>Upload new photos and videos.</li>
-                <li>Add or update health checkup details.</li>
-                <li>View your past matches and playdate history.</li>
-              </ul>
-              <button
-                onClick={() => alert("Imagine an 'Edit Profile' form popping up!")} // Using a placeholder alert for now
-                className="mt-6 bg-purple-500 hover:bg-purple-600 text-white font-bold py-3 px-6 rounded-full shadow-lg transition-all duration-300 transform hover:scale-105"
-              >
-                Set Up My Dog's Profile
-              </button>
+                <h3 className="text-2xl font-semibold text-gray-800 mb-4">Dogs You've Liked</h3>
+                {myLikedDogs.length > 0 ? (
+                    <ul className="list-disc list-inside text-left text-gray-700 space-y-2">
+                        {myLikedDogs.map(likedDogId => {
+                            const dog = dogs.find(d => d.id === likedDogId);
+                            return dog ? <li key={likedDogId}>{dog.name} ({dog.breed})</li> : <li key={likedDogId}>Unknown Dog (ID: {likedDogId})</li>;
+                        })}
+                    </ul>
+                ) : (
+                    <p className="text-gray-600">You haven't liked any dogs yet. Start swiping on the Home screen!</p>
+                )}
+                <p className="text-sm text-gray-500 mt-4 italic">
+                    In a full app, these would be your potential matches.
+                </p>
             </div>
           </section>
         )}
