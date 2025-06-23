@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>DoggieDate - Gallery</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js"></script>
+</head>
+<body>
+  <h1>Pet Gallery</h1>
+  <div id="gallery"></div>
+  <div id="ads">
+    <a href="YOUR_AFFILIATE_LINK" target="_blank">
+      <img src="https://via.placeholder.com/468x60?text=Ad+Banner" alt="Ad">
+    </a>
+  </div>
+  <script>
+    const supabaseUrl = 'YOUR_SUPABASE_URL';
+    const supabaseKey = 'YOUR_SUPABASE_ANON_KEY';
+    const supabase = supabase.createClient(supabaseUrl, supabaseKey);
+
+    async function loadGallery() {
+      let { data: folders, error } = await supabase.storage.from('pet-pics').list('', { limit: 100, offset: 0 });
+      if (error) return alert(error.message);
+      let html = '';
+      for (const folder of folders) {
+        let res = await supabase.storage.from('pet-pics').list(folder.name + '/');
+        if (res.data) {
+          for (const file of res.data) {
+            const url = supabase.storage.from('pet-pics').getPublicUrl(folder.name + '/' + file.name).data.publicUrl;
+            html += `<img src="${url}" width="150" style="margin:10px;">`;
+          }
+        }
+      }
+      document.getElementById('gallery').innerHTML = html;
+    }
+    loadGallery();
+  </script>
+</body>
+</html>
