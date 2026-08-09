@@ -22,22 +22,21 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
-          node-version: 20
-          cache: npm
+          node-version: 24
 
       - name: Install dependencies
         run: npm install
 
-      - name: Build
+      - name: Build Doggie Date
         run: npm run build
 
       - name: Upload build
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v4
         with:
           path: ./dist
 
@@ -51,6 +50,6 @@ jobs:
     needs: build
 
     steps:
-      - name: Deploy to GitHub Pages
+      - name: Deploy Doggie Date
         id: deployment
         uses: actions/deploy-pages@v4
